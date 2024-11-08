@@ -111,22 +111,3 @@ class UNet(nn.Module):
         x = self.last_conv(x)
 
         return x
-    
-
-
-"""
-Problema actual: MNIST tiene imágenes 28x28, que no son potencia de dos, por lo que al hacer el upsample
-hay problemas:
-
-Ejemplo
-28 / 2 = 14 | 14 / 2 = 7 | floor(7 / 2) = 3
-al hacer el primer upsample, la imagen pasará a ser 6x6, por lo que no se puede concatenar con la 7x7
-
-Para el caso de 32 (que sí es potencia de 2), en el código se ve que funciona perfectamente
-
-Ver como solucionar
-
-Listo: simplemente expandir las imágenes 
-"""
-
-
