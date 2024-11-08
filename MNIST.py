@@ -19,7 +19,7 @@ class MNIST_3s(torch.utils.data.Dataset):
     Samples of the MNIST only containing the 3s.
     """
 
-    def __init__(self, transformation, root = "mnist_png/training/1/"):
+    def __init__(self, transformation, root = "mnist_png/training/3/"):
         self.root = root
         self.transformation = transformation
         self.list = os.listdir(self.root)
