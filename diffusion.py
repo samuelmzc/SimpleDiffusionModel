@@ -1,46 +1,94 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from sympy import diff
+from sympy.tensor import get_indices
 import torch as torch
-
-def get_index_from_list(vals, t, x_shape):
-    """
-    Returns specific index t of a passed list of values vals, and considers the batch size
-    El tensor out se reconvierte en uno con forma (batch_size, 1, 1, .... , 1), dim = x_shape
-    La operación ((1,) * (len(x_shape) - 1)) genera una tupla de números 1 del tamaño len(x_shape)-1
-    y * desempaqueta la tupla para convertirla en valores individuales
-    """
-
-    batch_size = t.shape[0]
-    out = vals.gather(-1, t)
-    return out.reshape(batch_size, *((1,) * (len(x_shape) - 1)))
+from process_data import tensor_to_pil
 
 
-class diffusion:
-    def __init__(self, timesteps, start = 10**(-7), end = 0.02):
-        self.beta = torch.linspace(start, end, timesteps).sin()
-        self.alpha = 1 - self.beta
-        self.alpha_bar = torch.cumprod(self.alpha, axis = 0)
-        self.sqrt_alpha_bar = torch.sqrt(self.alpha_bar)
+unsqueeze3x = lambda x : x[..., None, None, None] 
+
+class diffusion_cosine:
+    def __init__(self, timesteps):
+        self.timesteps = timesteps
+        self.alpha_bar_schedule = (
+            lambda t: np.cos((t/timesteps + 0.008)/(1 + 0.008) * np.pi/2)**2
+        )
+        diff_params = self.params(self.alpha_bar_schedule)
+        self.beta, self.alpha, self.alpha_bar = diff_params["betas"], diff_params["alphas"], diff_params["alphas_bar"]
+        self.beta_tilde = self.beta[1:] * (
+            (1 - self.alpha_bar[:-1])
+            /
+            (1 - self.alpha_bar[1:])
+        )
+        self.beta_tilde = torch.cat(
+            [self.beta_tilde[0:1], self.beta_tilde]
+        )
+
+    def params(self, scheduler):
+        diff_params = {}
+        diff_params["betas"] = torch.from_numpy(
+            np.array(
+                [
+                    min(
+                        1 - scheduler(t + 1)/scheduler(t),
+                        0.999,
+                    )
+                    for t in range(self.timesteps)
+                ]
+            )
+        )
+        diff_params["alphas"] = 1 - diff_params["betas"]
+        diff_params["alphas_bar"] = torch.cumprod(diff_params["alphas"], dim = 0)
+        return diff_params
+
+    def forward(self, x0, t):
+        noise = torch.randn_like(x0)
+        xt = (
+            unsqueeze3x(torch.sqrt(self.alpha_bar[t])) * x0
+            +
+            unsqueeze3x(torch.sqrt(1 - self.alpha_bar[t])) * noise
+        )
+        return xt.float(), noise
+
+    def sample(self, xT, model, timesteps = None, save = None):
+        model.eval()
+
+        timesteps = timesteps or self.timesteps
+        sub_timesteps = np.linspace(0, timesteps - 1, timesteps)
+        xt = xT
         
-    def forward_step(self, x, t):
-        noise = torch.randn_like(x)
-        sqrt_alpha_bar_t = get_index_from_list(self.sqrt_alpha_bar, t, x.shape)
-        sqrt_alpha_bar_minus1 = get_index_from_list(torch.sqrt(1 - self.alpha_bar), t, x.shape)
-        xt = sqrt_alpha_bar_t * x + sqrt_alpha_bar_minus1 * noise
-        return xt, noise
+        for i, t in zip(np.arange(timesteps)[::-1], sub_timesteps[::-1]):
+            with torch.no_grad():
+                current_t = torch.full((1,), t)
+                current_t_indexed = torch.full((1,), i)
+                noise_pred = model(xt, current_t)
 
-    def backward_step(self, x, t, model):
-        beta_t = get_index_from_list(self.beta, t, x.shape)
-        alpha_bar_t = get_index_from_list(self.alpha_bar, t, x.shape)
-        sqrt_alpha_recip_t = get_index_from_list(1 / torch.sqrt(self.alpha), t, x.shape)
-        sqrt_alpha_minus1_t = get_index_from_list(torch.sqrt(1 - self.alpha_bar), t, x.shape)
+                mean = (
+                    1
+                    /
+                    unsqueeze3x(self.alpha[current_t_indexed].sqrt())
+                    *
+                    (xt - (
+                        unsqueeze3x(self.beta[current_t_indexed])
+                        /
+                        unsqueeze3x((1 - self.alpha_bar[current_t_indexed]).sqrt())
+                    ) * noise_pred)
+                )
         
+                if i == 0:
+                    xt = mean
+                
+                else:
+                    xt = mean + unsqueeze3x(self.beta_tilde[current_t_indexed].sqrt()) * torch.randn_like(xt)
+                
+                xt = xt.float()
 
-        model_mean = sqrt_alpha_recip_t * (x - beta_t/sqrt_alpha_minus1_t * model.forward(x, t))
-        
-        if t == 0:
-            return model_mean
-        else:
-            alpha_bar_tminus1 = get_index_from_list(self.alpha_bar, t - 1, x.shape)
-            z = torch.randn_like(x)
-            posterior_variance = (1 - alpha_bar_tminus1)/(1 - alpha_bar_t) * beta_t
-            return model_mean + torch.sqrt(posterior_variance)*z
+                if save:
+                    img = tensor_to_pil(xt)
+                    plt.imshow(img, cmap = "gray")
+                    plt.axis(False)
+                    plt.title(f"x_{i + 1}")
+                    plt.savefig(f"results/reversed_{i + 1 - 100}.png")
 
+        return xt.detach().float()

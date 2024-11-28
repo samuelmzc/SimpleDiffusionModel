@@ -23,7 +23,7 @@ class MNIST_3s(torch.utils.data.Dataset):
         self.root = root
         self.transformation = transformation
         self.list = os.listdir(self.root)
-    
+
     def __len__(self):
         return len(self.list)
 
@@ -32,11 +32,9 @@ class MNIST_3s(torch.utils.data.Dataset):
         image = expand_image(image)
         image = self.transformation(image)
         return image
-    
+
     def shape(self):
         image = Image.open(self.root + self.list[0])
         image = expand_image(image)
         image = self.transformation(image)
         return image.shape
-    
-    
