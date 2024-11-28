@@ -63,5 +63,3 @@ def sample_N(N, model, diffusion, img_size = img_size):
             axs[n].axis(False)
         
         plt.show()
-
-sample_N(1, model, diff_model)
